@@ -7,7 +7,7 @@ from openai import OpenAI
 import requests
 
 class FakeSearch:
-    def __init__(self, base_url="http://10.176.52.122:8848/v1"):
+    def __init__(self, base_url="http://127.0.0.1:8000/v1"):
         # 尽量自己部署模型用于实验，可以是任何模型
         self.client = OpenAI(
             api_key="EMPTY",

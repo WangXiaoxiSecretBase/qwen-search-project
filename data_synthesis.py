@@ -41,32 +41,19 @@ class DataSynthesizer:
         from fake_search import FakeSearch
         self.fake_search = FakeSearch()
 
-    def generate_response(self, question, use_search=False):
-        """生成模型回复"""
-        if use_search:
-            # 包含搜索工具的系统提示
-            system_prompt = f"""你是一个智能助手，可以使用搜索工具获取信息。当需要实时信息、最新数据或具体事实时，请使用搜索工具。
-
-可用工具：
-{json.dumps(self.search_tool, ensure_ascii=False, indent=2)}
-
-请仔细思考用户的问题，判断是否需要使用搜索工具。"""
-        else:
-            system_prompt = "你是一个智能助手，请仔细思考用户的问题并给出详细回答。"
-        
+    def generate_response(self, question):
+        """始终使用带工具描述的system_prompt"""
+        system_prompt = f"""你是一个智能助手，可以使用搜索工具获取信息。当需要实时信息、最新数据或具体事实时，请使用搜索工具。\n可用工具：\n{json.dumps(self.search_tool, ensure_ascii=False, indent=2)}\n请仔细思考用户的问题，判断是否需要使用搜索工具。"""
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": question}
         ]
-        
         text = self.tokenizer.apply_chat_template(
             messages, 
             tokenize=False, 
             add_generation_prompt=True
         )
-        
         inputs = self.tokenizer(text, return_tensors="pt").to(self.model.device)
-        
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
@@ -76,7 +63,6 @@ class DataSynthesizer:
                 top_p=0.9,
                 pad_token_id=self.tokenizer.eos_token_id
             )
-        
         response = self.tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
         return response
 
@@ -131,29 +117,22 @@ class DataSynthesizer:
         
         return response
 
-    def load_questions(self, with_search_file, without_search_file):
-        """加载问题"""
-        questions_with_search = []
-        questions_without_search = []
-        
-        if os.path.exists(with_search_file):
-            with open(with_search_file, 'r', encoding='utf-8') as f:
-                questions_with_search = [line.strip() for line in f if line.strip()]
-        
-        if os.path.exists(without_search_file):
-            with open(without_search_file, 'r', encoding='utf-8') as f:
-                questions_without_search = [line.strip() for line in f if line.strip()]
-        
-        return questions_with_search, questions_without_search
+    def load_questions(self, *question_files):
+        """加载所有问题文件，合并为一个列表"""
+        all_questions = []
+        for file in question_files:
+            if os.path.exists(file):
+                with open(file, 'r', encoding='utf-8') as f:
+                    all_questions.extend([line.strip() for line in f if line.strip()])
+        return all_questions
 
-    def synthesize_data(self, questions_with_search, questions_without_search, output_file):
-        """合成训练数据"""
+    def synthesize_data(self, questions, output_file):
+        """合成训练数据，模型自行判断是否调用search"""
         synthetic_data = []
-        
-        print("处理需要搜索的问题...")
-        for question in tqdm(questions_with_search):
+        print("处理所有问题...")
+        for question in tqdm(questions):
             try:
-                response = self.generate_response(question, use_search=True)
+                response = self.generate_response(question)
                 if self.extract_tool_calls(response):
                     final_response = self.simulate_tool_response(response, question)
                     synthetic_data.append({
@@ -162,7 +141,6 @@ class DataSynthesizer:
                         "use_search": True
                     })
                 else:
-                    # 如果没有调用工具，直接使用原始回复
                     synthetic_data.append({
                         "question": question,
                         "response": response,
@@ -171,42 +149,21 @@ class DataSynthesizer:
             except Exception as e:
                 print(f"处理问题时出错: {question[:50]}... 错误: {e}")
                 continue
-        
-        print("处理不需要搜索的问题...")
-        for question in tqdm(questions_without_search):
-            try:
-                response = self.generate_response(question, use_search=False)
-                synthetic_data.append({
-                    "question": question,
-                    "response": response,
-                    "use_search": False
-                })
-            except Exception as e:
-                print(f"处理问题时出错: {question[:50]}... 错误: {e}")
-                continue
-        
-        # 打乱数据
         random.shuffle(synthetic_data)
-        
-        # 保存数据
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(synthetic_data, f, ensure_ascii=False, indent=2)
-        
         print(f"合成完成！共生成 {len(synthetic_data)} 条数据，保存到 {output_file}")
         return synthetic_data
 
 if __name__ == "__main__":
     synthesizer = DataSynthesizer()
-    
-    # 加载问题
-    questions_with_search, questions_without_search = synthesizer.load_questions(
+    # 合并加载所有问题
+    all_questions = synthesizer.load_questions(
         "question_with_search.txt",
         "question_without_search.txt"
     )
-    
     # 合成数据
     synthetic_data = synthesizer.synthesize_data(
-        questions_with_search[:50],  # 限制数量以节省时间
-        questions_without_search[:50],
+        all_questions[:200],  # 可调整数量
         "synthetic_data.json"
     )
