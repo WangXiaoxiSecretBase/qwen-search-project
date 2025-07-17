@@ -54,7 +54,6 @@ python lora_train.py
 - 梯度累积: 4
 
 ### 4. 模型测试
-使用vLLM进行批量测试：
 
 ```bash
-python vllm_test.py --model_path /remote-home1/share/models/Qwen2.5-0.5B-Instruct --adapter_path ./qwen_lora_output
+python demo_qwen.py
